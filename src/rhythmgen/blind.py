@@ -26,6 +26,11 @@ spostato — l'assuefazione emergente dell'ipotesi centrale del design.
 Il warmup (i primi ``bootstrap_onsets`` onset) inizializza τ con la mediana
 degli inter-onset interval e assume il primo onset come battere; gli eventi
 di warmup non producono ScoredEvent.
+
+Due interfacce sullo stesso stato (M4): ``listen(events, duration_s)`` batch,
+e la coppia incrementale ``feed(t)`` / ``finish(duration_s)`` per il loop
+chiuso, che riceve gli onset man mano che il generatore li produce. Il batch
+è un wrapper della coppia: stesso percorso di codice, stessi risultati.
 """
 
 import math
@@ -65,8 +70,15 @@ class BlindListener:
         self.eta_period = eta_period
         self.bootstrap_onsets = bootstrap_onsets
         self.coherence_tau_s = coherence_tau_s
+        self._reset()
+
+    def _reset(self) -> None:
         self.tau_s: Optional[float] = None
         self.coherence_trace: list[tuple[float, float]] = []
+        self._boot: list[float] = []
+        self._dead = False  # warmup degenere (IOI tutti nulli): niente tempo
+        self._z = 0j
+        self._t_prev: Optional[float] = None
 
     # --- geometria dei picchi ------------------------------------------
     def _peak_time(self, i: int, k: int) -> float:
@@ -98,71 +110,95 @@ class BlindListener:
                 k += 1
 
     # --- ascolto --------------------------------------------------------
-    def listen(self, events: Iterable[Event], duration_s: Optional[float] = None) -> list[ScoredEvent]:
-        onsets = sorted(e.onset_s for e in events)
-        if len(onsets) <= self.bootstrap_onsets:
-            return []  # il warmup consumerebbe tutto: niente da inferire
-        boot = onsets[: self.bootstrap_onsets]
-        rest = onsets[self.bootstrap_onsets :]
-
-        iois = [b - a for a, b in zip(boot, boot[1:]) if b > a]
-        if not iois:
+    def feed(self, t: float) -> list[ScoredEvent]:
+        """Un onset alla volta, in ordine di tempo (interfaccia per il loop
+        chiuso, M4). Restituisce gli ScoredEvent emessi da questo onset: le
+        omissioni dei picchi ormai passati più l'onset stesso; lista vuota
+        durante il warmup."""
+        if self._dead:
             return []
-        self.tau_s = median(iois)
-        self._anchor = boot[0]  # primo onset = beat, e battere assunto
-        self._offsets = [0.0] * len(self.levels)
-        self._docked: list[set[int]] = [set() for _ in self.levels]
-        # i picchi fino alla fine del warmup sono già consumati
-        self._flushed = [
-            math.floor((boot[-1] - self._anchor) / (float(lv.period) * self.tau_s))
-            for lv in self.levels
-        ]
-        self.coherence_trace = []
-        z = 0j
-        t_prev: Optional[float] = None
+        if self.tau_s is None:
+            if len(self._boot) < self.bootstrap_onsets:
+                self._boot.append(t)
+                return []  # il warmup non produce eventi valutati
+            boot = self._boot
+            iois = [b - a for a, b in zip(boot, boot[1:]) if b > a]
+            if not iois:
+                self._dead = True
+                return []
+            self.tau_s = median(iois)
+            self._anchor = boot[0]  # primo onset = beat, e battere assunto
+            self._offsets = [0.0] * len(self.levels)
+            self._docked: list[set[int]] = [set() for _ in self.levels]
+            # i picchi fino alla fine del warmup sono già consumati
+            self._flushed = [
+                math.floor((boot[-1] - self._anchor) / (float(lv.period) * self.tau_s))
+                for lv in self.levels
+            ]
+
         scored: list[ScoredEvent] = []
+        self._flush_omissions(t, scored)
 
-        for t in rest:
-            self._flush_omissions(t, scored)
+        # valuta PRIMA di adattare: la sorpresa riflette l'aspettativa
+        # formata sul passato (D4)
+        snapshot = []
+        per_level: dict = {}
+        for i, lv in enumerate(self.levels):
+            k, d = self._nearest(i, t)
+            E = pulse(d / self.tau_s, self.width)
+            snapshot.append((i, lv, k, d, E))
+            per_level[lv.period] = 1.0 - E
+        surprise = sum(lv.weight * per_level[lv.period] for lv in self.levels)
+        scored.append(ScoredEvent(t, None, "onset", surprise, per_level))
 
-            # valuta PRIMA di adattare: la sorpresa riflette l'aspettativa
-            # formata sul passato (D4)
-            snapshot = []
-            per_level: dict = {}
-            for i, lv in enumerate(self.levels):
-                k, d = self._nearest(i, t)
-                E = pulse(d / self.tau_s, self.width)
-                snapshot.append((i, lv, k, d, E))
-                per_level[lv.period] = 1.0 - E
-            surprise = sum(lv.weight * per_level[lv.period] for lv in self.levels)
-            scored.append(ScoredEvent(t, None, "onset", surprise, per_level))
+        theta = 0.0
+        for i, lv, k, d, E in snapshot:
+            if E > 0.0 and k > self._flushed[i]:
+                self._docked[i].add(k)
+            # adattamento PLL, pesato dal kernel di accoppiamento; il
+            # kernel ha larghezza costante in tempo come il pulse (D4):
+            # se scalasse col periodo, il livello misura adatterebbe più
+            # in fretta del tactus, l'opposto del design (D3). Con il
+            # kernel locale i livelli lenti scivolano insieme all'ancora
+            # del tactus e re-inferiscono il battere solo su evidenza
+            # vicina ai loro picchi.
+            kappa = pulse(d / self.tau_s, self.coupling_factor)
+            if lv.period == 1:
+                theta = d / self.tau_s
+                self._anchor += self.eta_phase * kappa * d
+                # ponytail: floor a 50 ms, un τ collassato non è un tempo
+                self.tau_s = max(self.tau_s + self.eta_period * kappa * d, 0.05)
+            elif lv.period > 1:
+                self._offsets[i] += (self.eta_phase / float(lv.period)) * kappa * d
 
-            theta = 0.0
-            for i, lv, k, d, E in snapshot:
-                if E > 0.0 and k > self._flushed[i]:
-                    self._docked[i].add(k)
-                # adattamento PLL, pesato dal kernel di accoppiamento; il
-                # kernel ha larghezza costante in tempo come il pulse (D4):
-                # se scalasse col periodo, il livello misura adatterebbe più
-                # in fretta del tactus, l'opposto del design (D3). Con il
-                # kernel locale i livelli lenti scivolano insieme all'ancora
-                # del tactus e re-inferiscono il battere solo su evidenza
-                # vicina ai loro picchi.
-                kappa = pulse(d / self.tau_s, self.coupling_factor)
-                if lv.period == 1:
-                    theta = d / self.tau_s
-                    self._anchor += self.eta_phase * kappa * d
-                    # ponytail: floor a 50 ms, un τ collassato non è un tempo
-                    self.tau_s = max(self.tau_s + self.eta_period * kappa * d, 0.05)
-                elif lv.period > 1:
-                    self._offsets[i] += (self.eta_phase / float(lv.period)) * kappa * d
+        lam = (
+            math.exp(-(t - self._t_prev) / self.coherence_tau_s)
+            if self._t_prev is not None
+            else 0.0
+        )
+        self._z = self._z * lam + (1.0 - lam) * complex(
+            math.cos(2 * math.pi * theta), math.sin(2 * math.pi * theta)
+        )
+        self._t_prev = t
+        self.coherence_trace.append((t, abs(self._z)))
+        return scored
 
-            lam = math.exp(-(t - t_prev) / self.coherence_tau_s) if t_prev is not None else 0.0
-            z = z * lam + (1.0 - lam) * complex(
-                math.cos(2 * math.pi * theta), math.sin(2 * math.pi * theta)
-            )
-            t_prev = t
-            self.coherence_trace.append((t, abs(z)))
+    def finish(self, duration_s: Optional[float] = None) -> list[ScoredEvent]:
+        """Chiude lo stream: le omissioni residue fino a ``duration_s``
+        (default: l'ultimo onset ricevuto)."""
+        if self.tau_s is None:
+            return []
+        scored: list[ScoredEvent] = []
+        self._flush_omissions(
+            duration_s if duration_s is not None else self._t_prev, scored
+        )
+        return scored
 
-        self._flush_omissions(duration_s if duration_s is not None else rest[-1], scored)
+    def listen(self, events: Iterable[Event], duration_s: Optional[float] = None) -> list[ScoredEvent]:
+        """Interfaccia batch del contratto D2: wrapper di feed/finish."""
+        self._reset()
+        scored: list[ScoredEvent] = []
+        for t in sorted(e.onset_s for e in events):
+            scored += self.feed(t)
+        scored += self.finish(duration_s)
         return sorted(scored, key=lambda e: e.time_s)
