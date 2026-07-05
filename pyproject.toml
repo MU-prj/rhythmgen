@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "rhythmgen"
 version = "0.1.0"
 description = "Generazione di ritmi con ascoltatore interno (Dynamic Attending Theory)"
-requires-python = ">=3.10"
+requires-python = ">=3.12"  # statistics.correlation(method="ranked") nei test
 
 [tool.setuptools.packages.find]
 where = ["src"]
