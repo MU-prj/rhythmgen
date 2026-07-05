@@ -60,7 +60,9 @@ def default_levels(beats: int) -> list[Level]:
 @dataclass(frozen=True)
 class ScoredEvent:
     time_s: float
-    position: Fraction  # onset: posizione dell'evento; omissione: posizione del picco
+    # onset: posizione dell'evento; omissione: posizione del picco.
+    # None per l'ascoltatore cieco (M3), che le posizioni non le conosce.
+    position: Optional[Fraction]
     kind: str  # "onset" | "omission"
     surprise: float  # Σ wᵢ·Sᵢ ∈ [0,1]
     per_level: dict[Fraction, float]  # periodo → Sᵢ non pesata

@@ -189,14 +189,39 @@ Ogni milestone lascia un artefatto validabile in isolamento.
 
 ## Questioni aperte
 
-- Forma esatta del pulse (coseno rialzato vs von Mises) e larghezze per
-  livello: da tarare in M2 sull'ancoraggio esterno.
-- Meccanismo di accoppiamento tra oscillatori del banco (reset di fase vs
-  trascinamento morbido): da decidere in M3 sui dati di convergenza.
 - Pesi wᵢ dei livelli nella somma della sorpresa: fissi in fase 1, adattivi
   (es. pesati dalla coerenza del livello) come estensione.
-- Bootstrap del cieco: inizializzazione di τ (es. istogramma degli
-  inter-onset-interval iniziali) — dettaglio di M3.
+- Velocity nella pesatura della sorpresa (salienza percettiva): esclusa in
+  fase 1, estensione futura.
+
+## Decisioni prese in corso d'opera
+
+- **Pulse (M2)**: coseno rialzato con larghezza costante in tempo
+  (0.25 beat), NON in frazione di ciclo: a larghezza proporzionale, il
+  livello misura gonfia l'aspettativa dei levare vicini al battere e un
+  onset sul beat 2 sorprende più di un levare. Pesi dei livelli uguali:
+  l'aspettativa cumulata riproduce la scala metrica LHL. Ancoraggio esterno
+  misurato: Spearman 0.982 (LHL), 0.998 (Toussaint).
+- **Accoppiamento del banco (M3)**: "rapporti vincolati" — un periodo τ e
+  un'ancora di fase master (tactus); i livelli sopra il beat hanno offset
+  propri adattati più lentamente (η/r), quelli sotto ereditano l'ancora.
+  Kernel di accoppiamento locale, a larghezza costante in tempo (0.6 beat),
+  più largo del pulse di aspettativa: un evento lontano sorprende (E≈0) ma
+  trascina poco — è il meccanismo del ri-aggancio. Se il kernel scalasse
+  col periodo, il livello misura adatterebbe più in fretta del tactus
+  (verificato sperimentalmente, opposto di D3).
+- **Bootstrap del cieco (M3)**: τ = mediana degli inter-onset interval del
+  warmup (4 onset), primo onset = battere assunto; il warmup non produce
+  eventi valutati. Nota: su flussi molto densi o molto radi il cieco può
+  agganciare con piena coerenza un livello metrico sotto o sopra il tactus
+  notazionale (**ambiguità di livello metrico**): la divergenza dall'oracolo
+  misura la scelta di livello, non un fallimento. Fenomeno testato.
+- **Ri-aggancio dimostrato (M3)**: su uno switch permanente in levare,
+  l'oracolo resta a sorpresa massima per sempre; il cieco spicca alla
+  violazione e si ri-aggancia in poche misure (equilibrio metastabile in
+  controfase, sgocciolamento di fase, valanga). L'assuefazione emerge
+  dall'entrainment senza moduli dedicati, come previsto dall'ipotesi
+  centrale — al livello dell'ascoltatore; il test closed-loop resta a M4.
 
 ## Riferimenti di partenza
 

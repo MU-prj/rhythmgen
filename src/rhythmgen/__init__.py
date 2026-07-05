@@ -3,6 +3,7 @@
 Design e decisioni in docs/design.md.
 """
 
+from .blind import BlindListener
 from .generator import BernoulliGenerator
 from .grid import build_grid, metric_weight
 from .listener import (
@@ -18,6 +19,7 @@ from .syncopation import lhl_syncopation, toussaint_complexity
 
 __all__ = [
     "BernoulliGenerator",
+    "BlindListener",
     "Event",
     "Level",
     "OracleListener",
