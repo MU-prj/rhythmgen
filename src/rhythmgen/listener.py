@@ -102,7 +102,17 @@ class OracleListener:
             out[lv.period] = pulse(float(delta), self.width)
         return out
 
-    def listen(self, events: Iterable[Event], n_measures: int) -> list[ScoredEvent]:
+    def listen(
+        self,
+        events: Iterable[Event],
+        n_measures: int,
+        start_measure: int = 0,
+    ) -> list[ScoredEvent]:
+        """Valuta gli eventi e le omissioni dei picchi nella finestra di
+        ``n_measures`` misure a partire da ``start_measure``. La finestra
+        serve al loop chiuso (M4), che ascolta una misura alla volta:
+        l'oracolo è senza stato, quindi finestre consecutive equivalgono
+        all'ascolto dell'intera sequenza."""
         beat_s = 60.0 / self.bpm
         scored = []
         onset_positions = set()
@@ -112,11 +122,12 @@ class OracleListener:
             scored.append(ScoredEvent(ev.onset_s, ev.position, "onset", surprise, per_level))
             onset_positions.add(ev.position)
 
-        total_beats = n_measures * self.beats
+        lo = Fraction(start_measure * self.beats)
+        hi = lo + n_measures * self.beats
         peaks: dict[Fraction, list[Level]] = {}
         for lv in self.levels:
-            k = 0
-            while k * lv.period < total_beats:
+            k = math.ceil(lo / lv.period)
+            while k * lv.period < hi:
                 peaks.setdefault(k * lv.period, []).append(lv)
                 k += 1
         for pos, lvls in peaks.items():
@@ -130,18 +141,40 @@ class OracleListener:
         return sorted(scored, key=lambda e: e.time_s)
 
 
-def leaky_rms(scored: Iterable[ScoredEvent], tau_s: float) -> list[tuple[float, float]]:
-    """Media mobile RMS a decadimento esponenziale, campionata agli eventi (D4).
+class SurpriseRMS:
+    """Integratore incrementale della valuta (D4): media mobile RMS a
+    decadimento esponenziale, y ← y·α + s²·(1−α) con α = exp(−Δt/τ).
+    Con sorpresa costante s il valore converge a s.
 
-    EMA a campionamento irregolare: y ← y·α + s²·(1−α) con α = exp(−Δt/τ).
-    Con sorpresa costante s la traccia converge a s.
+    Forma a stato di ``leaky_rms``, per il loop chiuso (M4): gli
+    aggiornamenti arrivano in ordine di tempo; un Δt negativo (omissione
+    emessa in ritardo dall'ascoltatore cieco) è trattato come simultaneo.
     """
-    out = []
-    y = 0.0
-    t_prev: Optional[float] = None
-    for ev in sorted(scored, key=lambda e: e.time_s):
-        alpha = math.exp(-(ev.time_s - t_prev) / tau_s) if t_prev is not None else 0.0
-        y = y * alpha + ev.surprise**2 * (1.0 - alpha)
-        t_prev = ev.time_s
-        out.append((ev.time_s, math.sqrt(y)))
-    return out
+
+    def __init__(self, tau_s: float):
+        self.tau_s = tau_s
+        self._y = 0.0
+        self._t_prev: Optional[float] = None
+
+    @property
+    def value(self) -> float:
+        return math.sqrt(self._y)
+
+    def update(self, t_s: float, surprise: float) -> float:
+        if self._t_prev is None:
+            alpha = 0.0
+            self._t_prev = t_s
+        else:
+            alpha = math.exp(-max(t_s - self._t_prev, 0.0) / self.tau_s)
+            self._t_prev = max(t_s, self._t_prev)
+        self._y = self._y * alpha + surprise**2 * (1.0 - alpha)
+        return math.sqrt(self._y)
+
+
+def leaky_rms(scored: Iterable[ScoredEvent], tau_s: float) -> list[tuple[float, float]]:
+    """Media mobile RMS a decadimento esponenziale, campionata agli eventi (D4)."""
+    rms = SurpriseRMS(tau_s)
+    return [
+        (ev.time_s, rms.update(ev.time_s, ev.surprise))
+        for ev in sorted(scored, key=lambda e: e.time_s)
+    ]

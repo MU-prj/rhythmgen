@@ -222,6 +222,36 @@ Ogni milestone lascia un artefatto validabile in isolamento.
   controfase, sgocciolamento di fase, valanga). L'assuefazione emerge
   dall'entrainment senza moduli dedicati, come previsto dall'ipotesi
   centrale — al livello dell'ascoltatore; il test closed-loop resta a M4.
+- **Anti-windup per confinamento (M4)**: l'integrale del PI — il valore
+  "di riposo" del parametro — vive anch'esso in [lo, hi]. Scartata la
+  back-calculation `integral = hi − p`: con errore persistente di segno
+  costante inchioda l'uscita al bordo anche quando l'errore inverte
+  (verificato sperimentalmente: σ bloccata al rail con TV = 0). Col
+  confinamento la carica è limitata e il termine proporzionale stacca
+  l'uscita dal bordo al primo campione utile.
+- **Warm-lock del loop (M4)**: `engage_measure` tiene σ = σ₀ per un
+  prologo prima di innestare il PI: l'ascoltatore deve aver agganciato
+  qualcosa da cui essere sorpreso prima che il controllore muova il
+  generatore (coerente con D5: l'ascoltatore si adatta più in fretta del
+  controllore). Senza prologo il PI spara σ al massimo sull'errore
+  iniziale (RMS parte da zero) e il cieco fa il bootstrap su un flusso
+  già invertito: dinamica dipendente solo dalla fortuna del warmup.
+- **Esito del test dell'ipotesi centrale (M4)**: contro l'oracolo il PI
+  tiene il setpoint (|err| ≈ 0.02) con σ interna e assestata: contro un
+  riferimento fisso il controllore trova il punto fisso, come atteso nel
+  regime facile. Contro il cieco l'esito è più forte del previsto: libero
+  di scegliere il livello metrico, il cieco aggancia la suddivisione
+  (tactus = ottavo, ambiguità di livello nota da M3) e l'intera palette
+  {2} gli resta on-grid — σ ridistribuisce massa DENTRO la sua griglia e
+  smette di essere una leva di sorpresa (banda a regime ~0.21–0.24 contro
+  target 0.40). Il PI satura a σ = 1 senza avvicinarsi al target: non
+  "parametri in deriva" ma leva neutralizzata dall'entrainment. La deriva
+  prevista dall'ipotesi richiede leve che l'aggancio di livello non possa
+  assorbire (density, tuplet_mix su suddivisioni fuori griglia): sono la
+  prossima estensione naturale del controllore. Firma complementare
+  (ablazione D10): a σ = 1 statica il cieco resta sistematicamente sotto
+  l'oracolo (0.21–0.40 contro ~0.47) — la divergenza misura
+  l'assuefazione.
 
 ## Riferimenti di partenza
 
